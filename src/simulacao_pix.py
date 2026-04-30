@@ -50,10 +50,38 @@ def comparar_cenarios():
     return resultado
 
 
-if __name__ == "__main__":
-    resultado = comparar_cenarios()
+def analise_sensibilidade():
+    cenarios = [0.2, 0.4, 0.6]
+    resultados = []
 
+    for reducao in cenarios:
+        original, simulado = simular_pix(reducao_inadimplencia=reducao)
+
+        receita_original = original["valor_pago"].sum()
+        receita_simulada = simulado["valor_pago"].sum()
+
+        inadimplencia_original = (original["status"] == "Inadimplente").mean()
+        inadimplencia_simulada = (simulado["status"] == "Inadimplente").mean()
+
+        resultados.append({
+            "Reducao_Inadimplencia": reducao,
+            "Receita_Original": receita_original,
+            "Receita_Com_Pix": receita_simulada,
+            "Ganho_Receita": receita_simulada - receita_original,
+            "Inadimplencia_Original": inadimplencia_original,
+            "Inadimplencia_Com_Pix": inadimplencia_simulada
+        })
+
+    return pd.DataFrame(resultados)
+
+if __name__ == "__main__":
     print("\n=== COMPARAÇÃO DE CENÁRIOS ===\n")
+    resultado = comparar_cenarios()
 
     for k, v in resultado.items():
         print(f"{k}: {v}")
+
+    print("\n=== ANÁLISE DE SENSIBILIDADE ===\n")
+    sensibilidade = analise_sensibilidade()
+    print(sensibilidade)
+        
