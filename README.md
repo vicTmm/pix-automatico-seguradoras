@@ -1,6 +1,6 @@
 # 📊 Simulador Atuarial do Pix Automático
 
-Ferramenta desenvolvida em Python e Streamlit para simular o impacto do Pix Automático na inadimplência e no fluxo de caixa de seguradoras.
+Ferramenta desenvolvida em Python e Streamlit para simular o impacto do Pix Automático na inadimplência e no fluxo de caixa de seguradoras brasileiras.
 
 ## 🔍 Objetivo
 
@@ -30,7 +30,7 @@ A base deve conter as seguintes colunas:
 
 A aplicação está disponível em:
 
-👉 COLE AQUI O LINK DO STREAMLIT
+👉 https://pix-automatico-seguradoras-8w2snv6vm274wclkdkwarb.streamlit.app/
 
 ## 🧠 Tecnologias utilizadas
 
