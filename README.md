@@ -1,45 +1,90 @@
-# 📊 Simulador Atuarial do Pix Automático
+# Pix Automatico em Seguradoras
 
-Ferramenta desenvolvida em Python e Streamlit para simular o impacto do Pix Automático na inadimplência e no fluxo de caixa de seguradoras brasileiras.
+Ferramenta atuarial de apoio a decisao desenvolvida como TCC em Ciencias Atuariais. O projeto utiliza Python, SQLite, Pandas, Plotly e Streamlit para avaliar impactos potenciais do Pix Automatico na recuperacao de premio inadimplente em seguradoras brasileiras.
 
-## 🔍 Objetivo
+## Objetivo
 
-Permitir que seguradoras analisem, com base em seus próprios dados, os ganhos potenciais da automatização de pagamentos.
+A seguradora importa sua base de pagamentos e a ferramenta entrega automaticamente uma leitura atuarial da carteira:
 
-## ⚙️ Funcionalidades
+- indicadores de inadimplencia por quantidade e valor;
+- persistencia estimada da carteira;
+- cancelamentos estimados;
+- fluxo de caixa mensal;
+- valor presente dos recebimentos;
+- score de risco de inadimplencia por apolice;
+- ranking de grupos prioritarios para migracao ao Pix Automatico.
 
-- Upload de base de pagamentos (CSV/Excel)
-- Cálculo de indicadores (inadimplência, receita, atraso médio)
-- Simulação de cenários com Pix Automático
-- Comparação entre cenários
-- Visualização gráfica dos resultados
-- Download da base simulada
+## Premissa atuarial central
 
-## 📁 Estrutura esperada da base
+A ferramenta nao assume criacao de receita nova pelo Pix.
 
-A base deve conter as seguintes colunas:
+```text
+Premio esperado
+(-) premio inadimplente
+(+) premio recuperado com Pix
+= premio recebido estimado
+```
 
-- id_apolice
-- data_vencimento
-- data_pagamento
-- valor_pago
-- status (Pago / Inadimplente)
-- metodo_pagamento
+O Pix Automatico atua como mecanismo de recuperacao de valores em aberto. A metodologia e aplicada automaticamente; o usuario nao precisa ajustar filtros ou premissas no dashboard.
 
-## 🚀 Deploy
+## Estrutura minima da base
 
-A aplicação está disponível em:
+A base importada deve conter:
 
-👉 https://pix-automatico-seguradoras-8w2snv6vm274wclkdkwarb.streamlit.app/
+- `id_apolice`
+- `data_vencimento`
+- `data_pagamento`
+- `valor_pago`
+- `status`
+- `metodo_pagamento`
 
-## 🧠 Tecnologias utilizadas
+Colunas recomendadas para bases reais:
 
-- Python
-- Pandas
-- SQL (SQLite)
-- Streamlit
-- Plotly
+- `id_pagamento`
+- `id_segurado`
+- `id_parcela`
+- `competencia`
+- `ramo`
+- `perfil_pagamento`
+- `valor_esperado`
 
-## 📌 Autor
+Quando `valor_esperado` nao existir, a ferramenta infere o premio esperado pelo historico pago da apolice ou pela media paga da carteira. Para bases reais de seguradoras, recomenda-se enviar `valor_esperado` explicitamente.
+
+## Base sintetica
+
+O gerador atual cria varias competencias mensais por apolice, permitindo analise de recorrencia, atraso, frequencia de inadimplencia, persistencia e fluxo de caixa.
+
+```powershell
+python src\gerar_base_sintetica.py --apolices 5000 --meses 24 --seed 42
+```
+
+Esse comando atualiza:
+
+- `database/dados.db`
+- `data/pagamentos.csv`
+
+## Score de risco
+
+O score de inadimplencia e calculado automaticamente por apolice e varia de 0 a 100. Ele combina:
+
+- quantidade de atrasos;
+- frequencia de inadimplencia;
+- dias medios de atraso;
+- valor em aberto;
+- risco associado ao metodo de pagamento.
+
+## Executar dashboard
+
+```powershell
+python -m streamlit run app\streamlit_app.py
+```
+
+## Testes
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+## Autor
 
 Victor Hugo Araujo

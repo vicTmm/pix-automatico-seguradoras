@@ -1,39 +1,44 @@
+from pathlib import Path
+import sys
+
 import pandas as pd
-from conectar_banco import conectar_banco
-import os
 
-os.makedirs("data/processed", exist_ok=True)
 
-def calcular_indicadores():
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.append(str(ROOT_DIR))
+
+from src.actuarial.cashflow import inadimplencia_por_metodo
+from src.actuarial.metrics import calcular_indicadores_atuariais
+from src.conectar_banco import conectar_banco
+from src.data.schema import preparar_base_pagamentos
+
+
+def carregar_pagamentos_banco() -> pd.DataFrame:
     conn = conectar_banco()
-
     pagamentos = pd.read_sql_query("SELECT * FROM pagamentos", conn)
     conn.close()
 
-    total_pagamentos = len(pagamentos)
-    inadimplentes = pagamentos[pagamentos["status"] == "Inadimplente"]
+    return preparar_base_pagamentos(pagamentos)
 
-    taxa_inadimplencia = len(inadimplentes) / total_pagamentos
-    receita_prevista = pagamentos["valor_pago"].sum() + inadimplentes.shape[0] * pagamentos["valor_pago"].mean()
-    receita_recebida = pagamentos["valor_pago"].sum()
-    perda_inadimplencia = receita_prevista - receita_recebida
 
-    pagos = pagamentos[pagamentos["status"] == "Pago"].copy()
-    pagos["data_vencimento"] = pd.to_datetime(pagos["data_vencimento"])
-    pagos["data_pagamento"] = pd.to_datetime(pagos["data_pagamento"])
-    pagos["dias_atraso"] = (pagos["data_pagamento"] - pagos["data_vencimento"]).dt.days
+def calcular_indicadores(
+    taxa_cancelamento: float = 0.25,
+    taxa_desconto_anual: float = 0.10,
+) -> dict[str, float]:
+    pagamentos = carregar_pagamentos_banco()
 
-    atraso_medio = pagos["dias_atraso"].mean()
+    return calcular_indicadores_atuariais(
+        pagamentos,
+        taxa_cancelamento,
+        taxa_desconto_anual,
+    )
 
-    indicadores = {
-        "Total de pagamentos": total_pagamentos,
-        "Taxa de inadimplência": taxa_inadimplencia,
-        "Receita recebida": receita_recebida,
-        "Perda estimada por inadimplência": perda_inadimplencia,
-        "Atraso médio em dias": atraso_medio,
-    }
 
-    return indicadores
+def resumo_inadimplencia_por_metodo() -> pd.DataFrame:
+    pagamentos = carregar_pagamentos_banco()
+
+    return inadimplencia_por_metodo(pagamentos)
 
 
 if __name__ == "__main__":
@@ -42,38 +47,5 @@ if __name__ == "__main__":
     for indicador, valor in resultado.items():
         print(f"{indicador}: {valor}")
 
-        import matplotlib.pyplot as plt
-
-
-def gerar_graficos():
-    from simulacao_pix import comparar_cenarios
-
-    resultado = comparar_cenarios()
-
-    # -----------------------
-    # Gráfico de Receita
-    # -----------------------
-    receitas = [resultado["Receita Original"], resultado["Receita com Pix"]]
-
-    plt.figure()
-    plt.bar(["Sem Pix", "Com Pix"], receitas)
-    plt.title("Comparação de Receita")
-    plt.ylabel("Valor (R$)")
-    plt.savefig("data/processed/grafico_receita.png")
-
-    # -----------------------
-    # Gráfico de Inadimplência
-    # -----------------------
-    inad = [resultado["Inadimplência Original"], resultado["Inadimplência com Pix"]]
-
-    plt.figure()
-    plt.bar(["Sem Pix", "Com Pix"], inad)
-    plt.title("Comparação de Inadimplência")
-    plt.ylabel("Taxa")
-    plt.savefig("data/processed/grafico_inadimplencia.png")
-
-    print("Gráficos gerados com sucesso!")
-
-
-if __name__ == "__main__":
-    gerar_graficos()
+    print("\n=== INADIMPLENCIA POR METODO ===\n")
+    print(resumo_inadimplencia_por_metodo())
