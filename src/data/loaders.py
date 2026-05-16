@@ -13,7 +13,7 @@ def carregar_arquivo_pagamentos(file) -> pd.DataFrame:
     if filename.endswith((".xlsx", ".xls")):
         return pd.read_excel(file)
 
-    raise ValueError("Formato de arquivo nao suportado.")
+    raise ValueError("Formato de arquivo não suportado.")
 
 
 def carregar_csv_local(path: str | Path) -> pd.DataFrame:

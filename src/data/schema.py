@@ -58,7 +58,7 @@ def preparar_base_pagamentos(df: pd.DataFrame) -> pd.DataFrame:
     faltantes = validar_schema_pagamentos(df)
 
     if faltantes:
-        raise ValueError(f"Colunas obrigatorias ausentes: {', '.join(faltantes)}")
+        raise ValueError(f"Colunas obrigatórias ausentes: {', '.join(faltantes)}")
 
     base = df.copy()
 
@@ -92,9 +92,9 @@ def preparar_base_pagamentos(df: pd.DataFrame) -> pd.DataFrame:
     invalid_status = ~base["status"].isin(VALID_STATUS)
     if invalid_status.any():
         valores = sorted(base.loc[invalid_status, "status"].dropna().unique())
-        raise ValueError(f"Status invalidos encontrados: {', '.join(valores)}")
+        raise ValueError(f"Status inválidos encontrados: {', '.join(valores)}")
 
     if base["data_vencimento"].isna().any():
-        raise ValueError("Existem datas de vencimento invalidas na base.")
+        raise ValueError("Existem datas de vencimento inválidas na base.")
 
     return base

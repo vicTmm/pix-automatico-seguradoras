@@ -1,33 +1,33 @@
-# Pix Automatico em Seguradoras
+# Proposta de Ferramenta de Simulação Atuarial para Mensuração dos Impactos do Pix Automático na Inadimplência e no Fluxo de Caixa de Seguradoras Brasileiras
 
-Ferramenta atuarial de apoio a decisao desenvolvida como TCC em Ciencias Atuariais. O projeto utiliza Python, SQLite, Pandas, Plotly e Streamlit para avaliar impactos potenciais do Pix Automatico na recuperacao de premio inadimplente em seguradoras brasileiras.
+Projeto desenvolvido como Trabalho de Conclusão de Curso em Ciências Atuariais. A aplicação utiliza Python, Pandas, Plotly, SQLite e Streamlit para estruturar uma simulação atuarial voltada à avaliação dos efeitos potenciais do Pix Automático sobre a inadimplência, a persistência da carteira e o fluxo de caixa de seguradoras brasileiras.
 
-## Objetivo
+## Finalidade da ferramenta
 
-A seguradora importa sua base de pagamentos e a ferramenta entrega automaticamente uma leitura atuarial da carteira:
+Ao importar a base de pagamentos da seguradora, a ferramenta produz uma análise comparativa entre o cenário observado e o cenário estimado com adoção do Pix Automático, com foco em:
 
-- indicadores de inadimplencia por quantidade e valor;
-- persistencia estimada da carteira;
+- inadimplência por quantidade e por valor;
+- persistência estimada da carteira;
 - cancelamentos estimados;
 - fluxo de caixa mensal;
 - valor presente dos recebimentos;
-- score de risco de inadimplencia por apolice;
-- ranking de grupos prioritarios para migracao ao Pix Automatico.
+- índice de risco de inadimplência por apólice;
+- priorização de grupos para adoção do Pix Automático.
 
 ## Premissa atuarial central
 
-A ferramenta nao assume criacao de receita nova pelo Pix.
+A ferramenta não considera criação de receita nova pelo Pix. A proposta parte da recuperação de valores já esperados pela seguradora.
 
 ```text
-Premio esperado
-(-) premio inadimplente
-(+) premio recuperado com Pix
-= premio recebido estimado
+Prêmio esperado
+(-) prêmio inadimplente
+(+) prêmio recuperado com Pix
+= prêmio recebido estimado
 ```
 
-O Pix Automatico atua como mecanismo de recuperacao de valores em aberto. A metodologia e aplicada automaticamente; o usuario nao precisa ajustar filtros ou premissas no dashboard.
+Assim, o Pix Automático é tratado como mecanismo de redução de inadimplência e de recomposição do fluxo de caixa, e não como fonte de prêmio adicional.
 
-## Estrutura minima da base
+## Estrutura mínima da base
 
 A base importada deve conter:
 
@@ -38,7 +38,7 @@ A base importada deve conter:
 - `status`
 - `metodo_pagamento`
 
-Colunas recomendadas para bases reais:
+Colunas recomendadas para análises mais robustas:
 
 - `id_pagamento`
 - `id_segurado`
@@ -48,32 +48,34 @@ Colunas recomendadas para bases reais:
 - `perfil_pagamento`
 - `valor_esperado`
 
-Quando `valor_esperado` nao existir, a ferramenta infere o premio esperado pelo historico pago da apolice ou pela media paga da carteira. Para bases reais de seguradoras, recomenda-se enviar `valor_esperado` explicitamente.
+Quando `valor_esperado` não é informado, a ferramenta infere o prêmio esperado com base no histórico de pagamentos da apólice ou na média da carteira. Para maior consistência metodológica, recomenda-se informar esse campo explicitamente.
 
-## Base sintetica
+## Fluxo de utilização
 
-O gerador atual cria varias competencias mensais por apolice, permitindo analise de recorrencia, atraso, frequencia de inadimplencia, persistencia e fluxo de caixa.
+1. Exportar a base oficial de pagamentos da carteira em CSV ou Excel.
+2. Verificar a presença das colunas obrigatórias e, preferencialmente, de `valor_esperado` e `ramo`.
+3. Carregar o arquivo na aplicação.
+4. Comparar os cenários gerados e interpretar os efeitos sobre inadimplência e fluxo de caixa.
+5. Exportar os resultados produzidos pela simulação.
+
+## Contribuição da proposta
+
+A ferramenta foi concebida para apoiar a defesa do projeto, convertendo a base observada em evidências quantitativas que permitam:
+
+- estimar o efeito do Pix Automático sobre o recebimento de prêmios;
+- identificar concentrações de inadimplência por meio de cobrança e por grupo de risco;
+- observar alterações esperadas no fluxo de caixa;
+- priorizar frentes de adoção com base em critérios atuariais.
+
+## Gerador sintético
+
+O gerador sintético permanece disponível apenas como apoio interno de desenvolvimento e testes:
 
 ```powershell
 python src\gerar_base_sintetica.py --apolices 5000 --meses 24 --seed 42
 ```
 
-Esse comando atualiza:
-
-- `database/dados.db`
-- `data/pagamentos.csv`
-
-## Score de risco
-
-O score de inadimplencia e calculado automaticamente por apolice e varia de 0 a 100. Ele combina:
-
-- quantidade de atrasos;
-- frequencia de inadimplencia;
-- dias medios de atraso;
-- valor em aberto;
-- risco associado ao metodo de pagamento.
-
-## Executar dashboard
+## Executar a aplicação
 
 ```powershell
 python -m streamlit run app\streamlit_app.py
