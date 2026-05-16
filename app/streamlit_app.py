@@ -1630,7 +1630,7 @@ def render_metricas(resultados: AnalysisResults):
 
 def render_diagnostico(resultados: AnalysisResults):
     render_titulo_secao(
-        "Síntese técnico-atuarial",
+        "Síntese Atuarial",
         "Apresentação automatizada das principais evidências produzidas pela simulação sobre inadimplência, fluxo de caixa e priorização da carteira.",
     )
     colunas = st.columns(len(resultados.diagnostico))
