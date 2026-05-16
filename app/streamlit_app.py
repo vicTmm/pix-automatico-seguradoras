@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
-from dataclasses import dataclass
+import importlib
+import inspect
+from dataclasses import asdict, dataclass
 from pathlib import Path
 import sys
 import unicodedata
@@ -17,11 +19,13 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
+import src.actuarial.simulation as simulation_module
 from src.actuarial.cashflow import inadimplencia_por_metodo, montar_fluxo_caixa_mensal
 from src.actuarial.metrics import (
     calcular_indicadores_atuariais,
     montar_comparativo_indicadores,
 )
+from src.actuarial.pix_inference import estimar_recuperacao_pix_por_grupo
 from src.actuarial.risk import (
     RiskScoreWeights,
     RiskSegmentationThresholds,
@@ -41,9 +45,6 @@ st.set_page_config(
 
 px.defaults.template = "plotly_dark"
 
-TAXA_RECUPERACAO_PIX_PADRAO = 0.40
-TAXA_CANCELAMENTO_INADIMPLENTES_PADRAO = 0.25
-TAXA_DESCONTO_ANUAL_PADRAO = 0.10
 PESOS_RISCO_PADRAO = RiskScoreWeights()
 LIMITES_RISCO_PADRAO = RiskSegmentationThresholds()
 RECOMMENDED_PAYMENT_COLUMNS = [
@@ -101,6 +102,7 @@ class AnalysisResults:
     df_pix: pd.DataFrame
     indicadores_atual: dict[str, float]
     indicadores_pix: dict[str, float]
+    resumo_estimativa: dict[str, float]
     comparativo: pd.DataFrame
     fluxo: pd.DataFrame
     inad_metodo: pd.DataFrame
@@ -213,16 +215,51 @@ def aplicar_estilo_figura(fig: go.Figure, titulo: str | None = None) -> go.Figur
     return fig
 
 
+def executar_simulacao_pix_com_metadados(
+    df_atual: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    funcao_simulacao = simular_pix_automatico
+
+    try:
+        parametros = inspect.signature(funcao_simulacao).parameters
+    except (TypeError, ValueError):
+        parametros = {}
+
+    if "return_metadata" not in parametros:
+        modulo_recarregado = importlib.reload(simulation_module)
+        funcao_simulacao = modulo_recarregado.simular_pix_automatico
+        try:
+            parametros = inspect.signature(funcao_simulacao).parameters
+        except (TypeError, ValueError):
+            parametros = {}
+
+    if "return_metadata" in parametros:
+        return funcao_simulacao(df_atual, return_metadata=True)
+
+    df_pix = funcao_simulacao(df_atual)
+    _, resumo = estimar_recuperacao_pix_por_grupo(df_atual)
+    return df_pix, asdict(resumo)
+
+
 def formatar_valor_indicador(indicador: str, valor: float) -> str:
     indicador_normalizado = normalizar_texto(indicador)
 
-    if "inadimplencia" in indicador_normalizado or "persistencia" in indicador_normalizado:
+    if (
+        "inadimplencia" in indicador_normalizado
+        or "persistencia" in indicador_normalizado
+        or "regularidade" in indicador_normalizado
+        or "taxa de recebimento" in indicador_normalizado
+    ):
         return formatar_percentual(valor)
 
     if "atraso" in indicador_normalizado:
         return formatar_dias_mercado(valor)
 
-    if "cancelamentos" in indicador_normalizado:
+    if (
+        "cancelamentos" in indicador_normalizado
+        or "apolices" in indicador_normalizado
+        or "grupos" in indicador_normalizado
+    ):
         return formatar_numero(valor)
 
     return formatar_moeda(valor)
@@ -244,10 +281,9 @@ def montar_comparativo_formatado(comparativo: pd.DataFrame) -> pd.DataFrame:
         "Premio recuperado com Pix": "Prêmio recuperado com Pix",
         "Taxa de inadimplencia por quantidade": "Inadimplência por quantidade",
         "Taxa de inadimplencia por valor": "Inadimplência por valor",
-        "Persistencia estimada": "Persistência estimada",
-        "Cancelamentos estimados": "Cancelamentos estimados",
+        "Taxa de regularidade da carteira": "Regularidade da carteira",
+        "Apolices com saldo em aberto": "Apólices com saldo em aberto",
         "Atraso medio": "Atraso médio",
-        "Valor presente dos recebimentos": "Valor presente",
     }
     exibicao["Indicador"] = exibicao["Indicador"].replace(nomes_indicadores)
 
@@ -273,6 +309,7 @@ def compor_frente_prioridade(row: pd.Series) -> str:
 def gerar_diagnostico_executivo(
     indicadores_atual: dict[str, float],
     indicadores_pix: dict[str, float],
+    resumo_estimativa: dict[str, float],
     inadimplencia_metodo: pd.DataFrame,
     ranking_prioridade: pd.DataFrame,
 ) -> list[dict[str, str]]:
@@ -283,41 +320,52 @@ def gerar_diagnostico_executivo(
         indicadores_atual["taxa_inadimplencia_valor"]
         - indicadores_pix["taxa_inadimplencia_valor"]
     )
-    ganho_persistencia = (
-        indicadores_pix["persistencia_estimada"]
-        - indicadores_atual["persistencia_estimada"]
+    ganho_regularidade = (
+        indicadores_pix["taxa_regularidade_carteira"]
+        - indicadores_atual["taxa_regularidade_carteira"]
     )
-    ganho_vp = (
-        indicadores_pix["valor_presente_recebimentos"]
-        - indicadores_atual["valor_presente_recebimentos"]
+    reducao_apolices_em_aberto = (
+        indicadores_atual["apolices_com_saldo_em_aberto"]
+        - indicadores_pix["apolices_com_saldo_em_aberto"]
     )
 
     diagnostico = [
         {
-            "titulo": "Resultado da simulação",
+            "titulo": "Critério técnico da estimativa",
             "descricao": (
-                f"A simulação converte {formatar_moeda(ganho_recebimento)} de prêmio "
-                "em aberto em recebimento, sem alterar o prêmio esperado da carteira."
-            ),
-            "classe": "positivo",
-        },
-        {
-            "titulo": "Efeito sobre a inadimplência",
-            "descricao": (
-                f"A inadimplência por valor recua {formatar_percentual(reducao_inad_valor)} "
-                f"e a persistência aumenta {formatar_percentual(ganho_persistencia)}."
-            ),
-            "classe": "positivo",
-        },
-        {
-            "titulo": "Efeito econômico",
-            "descricao": (
-                "O valor presente dos recebimentos aumenta em "
-                f"{formatar_moeda(ganho_vp)}, reforçando a qualidade do fluxo projetado."
+                "A estimativa compara a taxa de recebimento observada da carteira "
+                f"({formatar_percentual(resumo_estimativa['taxa_recebimento_atual'])}) "
+                "com a referência observada nos meios digitais "
+                f"({formatar_percentual(resumo_estimativa['taxa_referencia_digital'])}), "
+                f"preservando o recorte técnico da base em {formatar_numero(resumo_estimativa['grupos_com_potencial'])} grupos com potencial de migração."
             ),
             "classe": "neutro",
-        },
+        }
     ]
+
+    if reducao_apolices_em_aberto > 0.01:
+        efeito_apolices = (
+            f"O número de apólices com saldo em aberto recua em {formatar_numero(reducao_apolices_em_aberto)}."
+        )
+    elif reducao_apolices_em_aberto < -0.01:
+        efeito_apolices = (
+            f"O número de apólices com saldo em aberto aumenta em {formatar_numero(abs(reducao_apolices_em_aberto))}."
+        )
+    else:
+        efeito_apolices = "O número de apólices com saldo em aberto permanece estável."
+
+    diagnostico.append(
+        {
+            "titulo": "Efeito estimado sobre a carteira",
+            "descricao": (
+                f"A adoção do Pix Automático recupera tecnicamente {formatar_moeda(ganho_recebimento)} "
+                f"de prêmio em aberto, reduz a inadimplência por valor em {formatar_percentual(reducao_inad_valor)} "
+                f"e eleva a regularidade da carteira em {formatar_percentual(ganho_regularidade)}. "
+                f"{efeito_apolices}"
+            ),
+            "classe": "positivo",
+        }
+    )
 
     if not inadimplencia_metodo.empty:
         metodo_critico = inadimplencia_metodo.iloc[0]
@@ -1053,7 +1101,7 @@ def render_hero(nome_arquivo: str | None, df: pd.DataFrame | None):
         ]
         subtitulo = (
             "Proposta de ferramenta de simulação atuarial para mensuração dos impactos "
-            "do Pix Automático sobre a inadimplência, a persistência e o fluxo de caixa "
+            "do Pix Automático sobre a inadimplência, a regularidade da carteira e o fluxo de caixa "
             "de seguradoras brasileiras."
         )
     else:
@@ -1067,8 +1115,9 @@ def render_hero(nome_arquivo: str | None, df: pd.DataFrame | None):
         ]
         subtitulo = (
             "Aplicação da proposta metodológica do estudo à carteira observada, com "
-            "estimativas sobre inadimplência, recuperação de prêmio e comportamento "
-            "do fluxo de caixa sob adoção do Pix Automático."
+            "estimativas inferidas a partir do histórico da própria base sobre "
+            "inadimplência, recuperação de prêmio e comportamento do fluxo de caixa "
+            "sob adoção do Pix Automático."
         )
 
     tags_html = "".join(f'<span class="hero-tag">{tag}</span>' for tag in tags)
@@ -1076,7 +1125,7 @@ def render_hero(nome_arquivo: str | None, df: pd.DataFrame | None):
         f"""
         <section class="hero-panel">
             <div class="eyebrow">Trabalho de Conclusão de Curso | Ciências Atuariais</div>
-            <div class="hero-title">Ferramenta de simulação atuarial para avaliação do Pix Automático</div>
+            <div class="hero-title">Ferramenta de simulação atuarial para mensuração do impacto do Pix Automático em uma carteira de seguros</div>
             <div class="hero-subtitle">{subtitulo}</div>
             <div class="tag-row">{tags_html}</div>
         </section>
@@ -1088,7 +1137,7 @@ def render_hero(nome_arquivo: str | None, df: pd.DataFrame | None):
 def render_estado_vazio():
     render_titulo_secao(
         "Proposta de ferramenta para o estudo atuarial",
-        "A aplicação foi estruturada para apoiar a defesa do projeto, permitindo importar a base observada, aplicar a simulação e apresentar evidências quantitativas sobre os efeitos do Pix Automático.",
+        "A aplicação foi estruturada para apoiar a defesa do projeto, permitindo importar a base observada, aplicar a estimação técnico-atuarial e apresentar evidências quantitativas sobre os efeitos do Pix Automático.",
     )
 
     colunas = st.columns(3)
@@ -1099,11 +1148,11 @@ def render_estado_vazio():
         ),
         (
             "Contribuição da ferramenta",
-            "Transformar a base de pagamentos em uma simulação atuarial com indicadores comparativos, leitura técnica e apoio à interpretação dos resultados.",
+            "Transformar a base de pagamentos em uma análise comparativa com leitura técnica, indicadores atuariais e estimativas inferidas do próprio comportamento observado da carteira.",
         ),
         (
             "Base empírica do estudo",
-            "Utilizar dados observados da carteira para reproduzir cenários e sustentar a análise da proposta com evidências quantitativas.",
+            "Utilizar dados observados da carteira para sustentar a análise da proposta com evidências quantitativas, sem recorrer a taxas fixas arbitrárias.",
         ),
     ]
 
@@ -1143,7 +1192,7 @@ def render_sidebar_upload(
             help="Envie a base oficial da carteira para processamento atuarial.",
         )
         st.caption(
-            "Formatos aceitos: CSV, XLSX e XLS. A base importada constitui o insumo empírico da simulação."
+            "Formatos aceitos: CSV, XLSX e XLS. A base importada constitui o insumo empírico da análise comparativa."
         )
         st.download_button(
             label="Modelo de importação",
@@ -1209,13 +1258,13 @@ def render_sidebar_filtros(df_segmentado: pd.DataFrame) -> dict[str, object]:
 
         filtros["periodo"] = periodo
 
-        with st.expander("Premissas do modelo", expanded=False):
+        with st.expander("Critério técnico da estimativa", expanded=False):
             st.markdown(
-                f"""
-                - Recuperação de inadimplência com Pix: {formatar_percentual(TAXA_RECUPERACAO_PIX_PADRAO)}
-                - Taxa de cancelamento sobre inadimplentes: {formatar_percentual(TAXA_CANCELAMENTO_INADIMPLENTES_PADRAO)}
-                - Taxa de desconto anual: {formatar_percentual(TAXA_DESCONTO_ANUAL_PADRAO)}
-                - Classificação de risco: índice padronizado de 0 a 100 por apólice
+                """
+                - A estimativa compara a taxa de recebimento observada em cada grupo técnico com a referência observada nos meios digitais da própria carteira.
+                - Os grupos técnicos consideram ramo e faixa de risco, quando essas informações estão disponíveis na base analisada.
+                - Quando não há histórico digital suficiente em determinado grupo, a ferramenta utiliza a melhor referência observada compatível no conjunto analisado.
+                - A priorização atuarial combina valor em aberto, índice de risco e potencial técnico de recuperação.
                 """
             )
 
@@ -1263,7 +1312,7 @@ def carregar_base_upload(file_name: str, file_bytes: bytes) -> pd.DataFrame:
 
 
 def executar_analise(df_atual: pd.DataFrame) -> AnalysisResults:
-    df_pix = simular_pix_automatico(df_atual, TAXA_RECUPERACAO_PIX_PADRAO)
+    df_pix, resumo_estimativa = executar_simulacao_pix_com_metadados(df_atual)
     df_pix = aplicar_segmentacao_risco(
         df_pix,
         pesos=PESOS_RISCO_PADRAO,
@@ -1271,27 +1320,20 @@ def executar_analise(df_atual: pd.DataFrame) -> AnalysisResults:
     )
     df_pix = padronizar_rotulos_exibicao(df_pix)
 
-    indicadores_atual = calcular_indicadores_atuariais(
-        df_atual,
-        TAXA_CANCELAMENTO_INADIMPLENTES_PADRAO,
-        TAXA_DESCONTO_ANUAL_PADRAO,
-    )
-    indicadores_pix = calcular_indicadores_atuariais(
-        df_pix,
-        TAXA_CANCELAMENTO_INADIMPLENTES_PADRAO,
-        TAXA_DESCONTO_ANUAL_PADRAO,
-    )
+    indicadores_atual = calcular_indicadores_atuariais(df_atual)
+    indicadores_pix = calcular_indicadores_atuariais(df_pix)
 
     comparativo = montar_comparativo_indicadores(indicadores_atual, indicadores_pix)
     fluxo = montar_fluxo_caixa_mensal(df_atual, df_pix)
     fluxo = padronizar_rotulos_exibicao(fluxo)
     inad_metodo = inadimplencia_por_metodo(df_atual)
     inad_metodo = padronizar_rotulos_exibicao(inad_metodo)
-    ranking = ranking_prioridade_migracao_pix(df_atual, TAXA_RECUPERACAO_PIX_PADRAO)
+    ranking = ranking_prioridade_migracao_pix(df_atual)
     ranking = padronizar_rotulos_exibicao(ranking)
     diagnostico = gerar_diagnostico_executivo(
         indicadores_atual,
         indicadores_pix,
+        resumo_estimativa,
         inad_metodo,
         ranking,
     )
@@ -1301,6 +1343,7 @@ def executar_analise(df_atual: pd.DataFrame) -> AnalysisResults:
         df_pix=df_pix,
         indicadores_atual=indicadores_atual,
         indicadores_pix=indicadores_pix,
+        resumo_estimativa=resumo_estimativa,
         comparativo=comparativo,
         fluxo=fluxo,
         inad_metodo=inad_metodo,
@@ -1548,19 +1591,41 @@ def criar_figura_ranking(ranking: pd.DataFrame) -> go.Figure:
 def construir_metricas(resultados: AnalysisResults) -> list[dict[str, str]]:
     indicadores_atual = resultados.indicadores_atual
     indicadores_pix = resultados.indicadores_pix
+    resumo_estimativa = resultados.resumo_estimativa
     reducao_inad_valor = (
         indicadores_atual["taxa_inadimplencia_valor"]
         - indicadores_pix["taxa_inadimplencia_valor"]
     )
     ganho_recebido = indicadores_pix["premio_recebido"] - indicadores_atual["premio_recebido"]
-    ganho_vp = (
-        indicadores_pix["valor_presente_recebimentos"]
-        - indicadores_atual["valor_presente_recebimentos"]
+    ganho_regularidade = (
+        indicadores_pix["taxa_regularidade_carteira"]
+        - indicadores_atual["taxa_regularidade_carteira"]
     )
-    cancelamentos_evitados = (
-        indicadores_atual["cancelamentos_estimados"]
-        - indicadores_pix["cancelamentos_estimados"]
+    reducao_apolices_abertas = (
+        indicadores_atual["apolices_com_saldo_em_aberto"]
+        - indicadores_pix["apolices_com_saldo_em_aberto"]
     )
+    delta_inadimplencia = (
+        f"- {formatar_percentual_compacto(reducao_inad_valor)}"
+        if reducao_inad_valor >= 0
+        else f"+ {formatar_percentual_compacto(abs(reducao_inad_valor))}"
+    )
+    classe_inadimplencia = "positivo" if reducao_inad_valor >= 0 else "atencao"
+    delta_regularidade = (
+        f"+ {formatar_percentual_compacto(ganho_regularidade)}"
+        if ganho_regularidade >= 0
+        else f"- {formatar_percentual_compacto(abs(ganho_regularidade))}"
+    )
+    classe_regularidade = "positivo" if ganho_regularidade >= 0 else "atencao"
+    if reducao_apolices_abertas > 0.01:
+        delta_apolices_abertas = f"- {formatar_numero(reducao_apolices_abertas)}"
+        classe_apolices_abertas = "positivo"
+    elif reducao_apolices_abertas < -0.01:
+        delta_apolices_abertas = f"+ {formatar_numero(abs(reducao_apolices_abertas))}"
+        classe_apolices_abertas = "atencao"
+    else:
+        delta_apolices_abertas = "Sem variação"
+        classe_apolices_abertas = "neutro"
 
     return [
         {
@@ -1570,19 +1635,19 @@ def construir_metricas(resultados: AnalysisResults) -> list[dict[str, str]]:
             "classe": "neutro",
         },
         {
-            "label": "Prêmio em aberto",
-            "valor": formatar_moeda_compacta(indicadores_atual["premio_inadimplente"]),
-            "delta": formatar_percentual_compacto(indicadores_atual["taxa_inadimplencia_valor"]),
-            "classe": "atencao",
+            "label": "Recebimento observado",
+            "valor": formatar_moeda_compacta(indicadores_atual["premio_recebido"]),
+            "delta": formatar_percentual_compacto(resumo_estimativa["taxa_recebimento_atual"]),
+            "classe": "neutro",
         },
         {
-            "label": "Recuperação potencial com Pix",
+            "label": "Recuperação técnica com Pix",
             "valor": formatar_moeda_compacta(indicadores_pix["premio_recuperado_pix"]),
-            "delta": "Prêmio recuperado",
+            "delta": formatar_percentual_compacto(resumo_estimativa["taxa_recuperacao_inferida"]),
             "classe": "positivo",
         },
         {
-            "label": "Recebimento com Pix",
+            "label": "Recebimento estimado com Pix",
             "valor": formatar_moeda_compacta(indicadores_pix["premio_recebido"]),
             "delta": f"+ {formatar_moeda_compacta(ganho_recebido)}",
             "classe": "positivo",
@@ -1590,25 +1655,25 @@ def construir_metricas(resultados: AnalysisResults) -> list[dict[str, str]]:
         {
             "label": "Inadimplência por valor",
             "valor": formatar_percentual_compacto(indicadores_pix["taxa_inadimplencia_valor"]),
-            "delta": f"- {formatar_percentual_compacto(reducao_inad_valor)}",
-            "classe": "positivo",
+            "delta": delta_inadimplencia,
+            "classe": classe_inadimplencia,
         },
         {
-            "label": "Persistência estimada",
-            "valor": formatar_percentual_compacto(indicadores_pix["persistencia_estimada"]),
-            "delta": "Menor pressão de cancelamento",
-            "classe": "positivo",
+            "label": "Regularidade da carteira",
+            "valor": formatar_percentual_compacto(indicadores_pix["taxa_regularidade_carteira"]),
+            "delta": delta_regularidade,
+            "classe": classe_regularidade,
         },
         {
-            "label": "Valor presente dos recebimentos",
-            "valor": formatar_moeda_compacta(indicadores_pix["valor_presente_recebimentos"]),
-            "delta": f"+ {formatar_moeda_compacta(ganho_vp)}",
-            "classe": "neutro",
+            "label": "Apólices com saldo em aberto",
+            "valor": formatar_numero(indicadores_pix["apolices_com_saldo_em_aberto"]),
+            "delta": delta_apolices_abertas,
+            "classe": classe_apolices_abertas,
         },
         {
-            "label": "Cancelamentos evitados",
-            "valor": formatar_numero(cancelamentos_evitados),
-            "delta": "Estimativa atuarial",
+            "label": "Referência digital observada",
+            "valor": formatar_percentual_compacto(resumo_estimativa["taxa_referencia_digital"]),
+            "delta": f"{formatar_numero(resumo_estimativa['grupos_com_potencial'])} grupos com potencial",
             "classe": "neutro",
         },
     ]
@@ -1630,8 +1695,8 @@ def render_metricas(resultados: AnalysisResults):
 
 def render_diagnostico(resultados: AnalysisResults):
     render_titulo_secao(
-        "Síntese Atuarial",
-        "Apresentação automatizada das principais evidências produzidas pela simulação sobre inadimplência, fluxo de caixa e priorização da carteira.",
+        "Síntese técnico-atuarial",
+        "Apresentação automatizada das principais evidências produzidas pela estimação da ferramenta sobre inadimplência, fluxo de caixa e priorização da carteira.",
     )
     colunas = st.columns(len(resultados.diagnostico))
     for coluna, insight in zip(colunas, resultados.diagnostico):
@@ -1684,7 +1749,7 @@ def calcular_resumo_governanca(df_raw: pd.DataFrame, df_atual: pd.DataFrame) -> 
 def render_aba_visao_geral(resultados: AnalysisResults):
     render_titulo_secao(
         "Comparação entre cenários",
-        "Compare a carteira observada com a estimativa sob Pix Automático e examine os efeitos econômicos centrais da proposta metodológica.",
+        "Compare a carteira observada com a estimativa inferida sob Pix Automático e examine os efeitos econômicos centrais da proposta metodológica.",
     )
 
     col_a, col_b = st.columns([1.2, 1])
@@ -1708,7 +1773,7 @@ def render_aba_visao_geral(resultados: AnalysisResults):
 def render_aba_fluxo(resultados: AnalysisResults):
     render_titulo_secao(
         "Impactos sobre o fluxo de caixa",
-        "Avalie em quais períodos o Pix Automático altera o comportamento dos recebimentos e quais meios de cobrança concentram maior sensibilidade à inadimplência.",
+        "Avalie em quais períodos o Pix Automático altera o comportamento dos recebimentos e quais meios de cobrança concentram maior sensibilidade técnica à inadimplência.",
     )
 
     col_a, col_b = st.columns([1.35, 1])
@@ -1730,7 +1795,7 @@ def render_aba_fluxo(resultados: AnalysisResults):
 def render_aba_risco(resultados: AnalysisResults):
     render_titulo_secao(
         "Inadimplência e priorização atuarial",
-        "A classificação de risco identifica concentrações de valor em aberto e aponta os grupos que melhor sustentam a adoção prioritária do Pix Automático.",
+        "A classificação de risco identifica concentrações de valor em aberto e aponta os grupos que melhor sustentam a adoção prioritária do Pix Automático pela ótica técnica da carteira observada.",
     )
 
     col_a, col_b = st.columns([1, 1.15])
@@ -1806,7 +1871,7 @@ def render_aba_dados(
 ):
     render_titulo_secao(
         "Base analítica e documentação",
-        "Área de apoio à rastreabilidade do estudo, com resumo da base utilizada, documentação dos campos e exportação dos resultados da simulação.",
+        "Área de apoio à rastreabilidade do estudo, com resumo da base utilizada, documentação dos campos e exportação dos resultados da estimação.",
     )
 
     governanca = calcular_resumo_governanca(df_raw, resultados.df_atual)

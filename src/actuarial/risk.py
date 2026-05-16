@@ -3,6 +3,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from src.actuarial.pix_inference import estimar_recuperacao_pix_por_grupo
+
 
 @dataclass(frozen=True)
 class RiskScoreWeights:
@@ -165,7 +167,6 @@ def aplicar_segmentacao_risco(
 
 def ranking_prioridade_migracao_pix(
     df: pd.DataFrame,
-    taxa_recuperacao_inadimplencia: float,
 ) -> pd.DataFrame:
     dimensoes = ["segmento_risco", "metodo_pagamento"]
 
@@ -184,9 +185,20 @@ def ranking_prioridade_migracao_pix(
         .reset_index()
     )
 
-    ranking["recuperacao_potencial_pix"] = (
-        ranking["valor_em_aberto"] * taxa_recuperacao_inadimplencia
+    estimativas_grupo, _ = estimar_recuperacao_pix_por_grupo(df)
+    ranking = ranking.merge(
+        estimativas_grupo[
+            dimensoes
+            + [
+                "taxa_recebimento_observada",
+                "taxa_referencia_digital",
+                "recuperacao_potencial_pix",
+            ]
+        ],
+        on=dimensoes,
+        how="left",
     )
+    ranking["recuperacao_potencial_pix"] = ranking["recuperacao_potencial_pix"].fillna(0.0)
     ranking["indice_prioridade"] = (
         ranking["recuperacao_potencial_pix"] * (1 + ranking["score_medio"].fillna(0) / 100)
     )

@@ -22,7 +22,9 @@ def carregar_pagamentos_banco() -> pd.DataFrame:
     return preparar_base_pagamentos(pagamentos)
 
 
-def simular_pix(reducao_inadimplencia: float = 0.4) -> tuple[pd.DataFrame, pd.DataFrame]:
+def simular_pix(
+    reducao_inadimplencia: float | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     pagamentos = carregar_pagamentos_banco()
     pagamentos_simulados = simular_pix_automatico(pagamentos, reducao_inadimplencia)
 
@@ -30,9 +32,9 @@ def simular_pix(reducao_inadimplencia: float = 0.4) -> tuple[pd.DataFrame, pd.Da
 
 
 def montar_comparativo_atuarial(
-    reducao_inadimplencia: float = 0.4,
-    taxa_cancelamento: float = 0.25,
-    taxa_desconto_anual: float = 0.10,
+    reducao_inadimplencia: float | None = None,
+    taxa_cancelamento: float | None = None,
+    taxa_desconto_anual: float | None = None,
 ) -> dict[str, float]:
     original, simulado = simular_pix(reducao_inadimplencia)
 

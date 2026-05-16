@@ -54,11 +54,26 @@ class ActuarialLogicTest(unittest.TestCase):
 
     def test_indicadores_calculam_inadimplencia_por_quantidade_e_valor(self):
         atual = preparar_base_pagamentos(self.base)
-        indicadores = calcular_indicadores_atuariais(atual, 0.25, 0.10)
+        indicadores = calcular_indicadores_atuariais(atual)
 
         self.assertEqual(indicadores["taxa_inadimplencia_qtd"], 0.5)
         self.assertEqual(indicadores["taxa_inadimplencia_valor"], 250.0 / 550.0)
         self.assertEqual(indicadores["atraso_medio"], 5.0)
+        self.assertEqual(indicadores["taxa_regularidade_carteira"], 0.5)
+        self.assertEqual(indicadores["apolices_com_saldo_em_aberto"], 2.0)
+
+    def test_simulacao_inferida_reage_ao_historico_observado(self):
+        atual = preparar_base_pagamentos(self.base)
+        simulado, resumo = simular_pix_automatico(atual, return_metadata=True)
+
+        indicadores_atual = calcular_indicadores_atuariais(atual)
+        indicadores_pix = calcular_indicadores_atuariais(simulado)
+
+        self.assertEqual(indicadores_atual["premio_esperado"], indicadores_pix["premio_esperado"])
+        self.assertGreater(indicadores_pix["premio_recebido"], indicadores_atual["premio_recebido"])
+        self.assertLess(indicadores_pix["premio_inadimplente"], indicadores_atual["premio_inadimplente"])
+        self.assertGreater(resumo["taxa_referencia_digital"], resumo["taxa_recebimento_atual"])
+        self.assertGreater(resumo["recuperacao_potencial_total"], 0.0)
 
     def test_segmentacao_de_risco_adiciona_score_interpretavel(self):
         atual = preparar_base_pagamentos(self.base)

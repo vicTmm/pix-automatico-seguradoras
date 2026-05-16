@@ -23,8 +23,8 @@ def carregar_pagamentos_banco() -> pd.DataFrame:
 
 
 def calcular_indicadores(
-    taxa_cancelamento: float = 0.25,
-    taxa_desconto_anual: float = 0.10,
+    taxa_cancelamento: float | None = None,
+    taxa_desconto_anual: float | None = None,
 ) -> dict[str, float]:
     pagamentos = carregar_pagamentos_banco()
 
